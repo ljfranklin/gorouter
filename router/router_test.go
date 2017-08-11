@@ -850,6 +850,69 @@ var _ = Describe("Router", func() {
 		})
 	})
 
+	FDescribe("XFCC header behavior", func() {
+		var receivedReqChan chan *http.Request
+		var req *http.Request
+		var httpClient *http.Client
+
+		BeforeEach(func() {
+			// create a generic request
+			receivedReqChan = make(chan *http.Request, 1)
+
+			uri := fmt.Sprintf("https://test.vcap.me:%d/record_headers", config.SSLPort)
+			req, _ = http.NewRequest("GET", uri, nil)
+
+			httpClient = &http.Client{Transport: &http.Transport{
+				TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+			}}
+		})
+
+		JustBeforeEach(func() {
+			app := test.NewGreetApp([]route.Uri{"test.vcap.me"}, config.Port, mbusClient, nil)
+			app.AddHandler("/record_headers", func(w http.ResponseWriter, r *http.Request) {
+				receivedReqChan <- r
+				w.WriteHeader(http.StatusTeapot)
+			})
+			app.RegisterAndListen()
+			Eventually(func() bool {
+				return appRegistered(registry, app)
+			}).Should(BeTrue())
+		})
+
+		Context("when the xfcc header is provided", func() {
+			BeforeEach(func() {
+				req.Header.Set("X-Forwarded-Client-Cert", "potato")
+			})
+
+			Context("when the gorouter is configured with always_forward", func() {
+				BeforeEach(func() {
+					config.ForwardedClientCert = "always_forward"
+				})
+
+				Context("when the client connects with regular (non-mutual) TLS", func() {
+					It("does not remove the xfcc header", func() {
+						resp, err := httpClient.Do(req)
+						Expect(err).NotTo(HaveOccurred())
+						defer resp.Body.Close()
+						Expect(resp.StatusCode).To(Equal(http.StatusTeapot))
+
+						var receivedReq *http.Request
+						Eventually(receivedReqChan).Should(Receive(&receivedReq))
+						Expect(receivedReq.Header.Get("X-Forwarded-Client-Cert")).To(Equal("potato"))
+					})
+				})
+
+				XContext("when the client connects with out any TLS", func() {
+
+				})
+
+				XContext("when the client connects with mTLS", func() {
+
+				})
+			})
+		})
+	})
+
 	Context("serving https", func() {
 		var (
 			cert, key []byte
@@ -1225,6 +1288,7 @@ var _ = Describe("Router", func() {
 				defer resp.Body.Close()
 			})
 		})
+
 	})
 })
 
